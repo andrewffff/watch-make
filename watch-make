@@ -1,0 +1,44 @@
+#!/usr/bin/env node
+
+var spawnArgv0 = require('child_process_with_argv0').spawn,
+	Controller = require('./lib/controller.js').Controller,
+	path = require('path'),
+	underscore = require('underscore');
+
+var PATHSEP = (process.platform == 'win32') ? ';' : ':';
+
+// create the unix socket
+
+controller = new Controller();
+
+// extract the command out (/xxx/yyy/watch-make --> make), put interceptor-bin
+// into the path, and run the stub whenever the controller tells us to
+
+var interceptorDir = path.join(path.dirname(process.argv[1]), 'interceptor-bin');
+
+var newEnv = underscore.extend({}, process.env, {
+	PATH: interceptorDir + PATHSEP + process.env.PATH,
+	WATCH_MAKE_CONTROLLER_24535: controller.socketPath
+	});
+
+var commandArgs = process.argv.slice(1);
+commandArgs[0] = path.basename(process.argv[1]);
+if(commandArgs[0].indexOf('watch-') === 0)
+	commandArgs[0] = commandArgs[0].substr(6);
+
+var command = path.join(interceptorDir, commandArgs[0]);
+
+controller.on('run', function(cb) {
+	var proc = spawnArgv0(
+		path.join(interceptorDir, commandArgs[0]),
+		commandArgs,
+		{
+			env: newEnv,
+			stdio: 'inherit'
+		});
+
+	proc.on('exit', cb); // passes exit code through
+});
+
+
+

@@ -1,0 +1,83 @@
+#!/usr/bin/env node
+
+var path = require('path'),
+	net = require('net'),
+	async = require('async'),
+	execFileArgv0 = require('child_process_with_argv0').execFile,
+	spawnArgv0 = require('child_process_with_argv0').spawn;
+
+
+//
+// "node /path/to/substitute/make a b c" --> "make a b c"
+//
+var argv = process.argv.slice(1);
+argv[0] = path.basename(argv[0]);
+
+
+//
+// connect to the unix socket where the controller process is listening
+//
+if(!process.env.WATCH_MAKE_CONTROLLER_24535) {
+	console.error("watch-make slave could not locate controller process");
+	process.exit(100);
+}
+
+//console.log('Connecting to:', process.env.WATCH_MAKE_CONTROLLER_24535);
+
+var conn = net.connect({ path: process.env.WATCH_MAKE_CONTROLLER_24535 });
+
+conn.on('error', function() {
+	console.error("watch-make slave could not connect to, or communicate with, controller process");
+	process.exit(100);
+});
+
+//
+// On startup, we send our command line to the controller process. It will
+// send back commands we should run
+//
+conn.on('connect', function() {
+	conn.write(JSON.stringify({ 'reqtype': 'command', 'command_line_argv': argv }) + "\n");
+});
+
+var previousData = '';
+conn.on('data', function(d) {
+	previousData += d;
+	var obj = JSON.parse(previousData);
+	if(obj) {
+		// got it all
+		previousData = '';
+		
+		// the server gives us commands to run, along with a directive to either
+		//   * capture all output and send up to the server
+		//   * expose the process output to the user
+		async.series(obj.map(function(item){
+			return function(cb) {
+				if(item.resultsToServer) {
+					execFileArgv0(item.filename, item.argv, {}, function(err, stdout, stderr) {
+						var upload = JSON.stringify({
+							reqtype: 'output',
+							command_line_argv: argv,
+							err: err ? (err.code || true) : null,
+							stdout: stdout,
+							stderr: stderr
+						}); 
+
+						conn.write(upload + "\n", 'utf8', function() {
+							if(err) {
+								console.error("watch-make: make failed when getting data for controller. Is the makefile ok?");
+								process.exit(err.code || 1);
+							} else {
+								cb();
+							}
+						});
+					});
+				} else {
+					var proc = spawnArgv0(item.filename, item.argv, { stdio: 'inherit' });
+					proc.on('exit', process.exit); // exit code passed through
+				}
+			};
+		}));
+	}
+});
+		
+
