@@ -36,7 +36,7 @@ conn.on('error', function() {
 // send back commands we should run
 //
 conn.on('connect', function() {
-	conn.write(JSON.stringify({ 'reqtype': 'command', 'command_line_argv': argv }) + "\n");
+	conn.write(JSON.stringify({ 'reqtype': 'command', 'cwd': process.cwd, 'command_line_argv': argv }) + "\n");
 });
 
 var previousData = '';
@@ -56,6 +56,7 @@ conn.on('data', function(d) {
 					execFileArgv0(item.filename, item.argv, {}, function(err, stdout, stderr) {
 						var upload = JSON.stringify({
 							reqtype: 'output',
+							cwd: process.cwd,
 							command_line_argv: argv,
 							err: err ? (err.code || true) : null,
 							stdout: stdout,
