@@ -1,7 +1,6 @@
 
-var temp = require('temp'),
-	_ = require('underscore'),
-	fs = require('fs'),
+var fs = require('fs'),
+	child_process = require('child_process'),
 	assert = require('assert'),
 	async = require('async'),
 	mkfiletree = require('mkfiletree');
@@ -31,7 +30,16 @@ var temp = require('temp'),
 
 function runTest(testModule, runTestCb) {
 	// non-function steps get transformed into implementation functions
-	var steps = testModule.steps.map(getFunctionForStep);
+	var plainSteps = testModule.steps.map(getFunctionForStep);
+
+	// because os x only has 1s resolution on modification time, we need
+	// to add lots of pauses in-between steps so our comparisons work :(
+	var silentWait = function(cb) { setTimeout(function() { cb(null, true); }, 2000); };
+	var steps = [];
+	plainSteps.forEach(function(s) {
+		steps.push(silentWait);
+		steps.push(s);
+	});
 
 	// create temporary directory with files in it
 	mkfiletree.makeTemp('watchmaketest', testModule.content, function(err,dir) {
@@ -73,26 +81,32 @@ function getFunctionForStep(s) {
 		throw new Error("invalid step in exports.steps");
 }
 
-/*
-function writeContentToPwd(content) {
-	var createdDirs = {};
-	Object.getOwnPropertyNames(content).forEach(function(givenPath) {
-		var parts = givenPath.split('/');
-		for(var i = 0; i < parts.length - 1; ++i) {
-			var joined = parts.slice(0, i+1).join('/');
-			if(!createdDirs[joined]) {
-				fs.mkdirSync(joined);
-				createdDirs[joined] = true;
-			}
-		}
+function verifyModifiedOrder(filenames, cb) {
+	async.map(filenames, fs.stat, function(err, results) {
+		if(err) cb(err);
+		else {
+			var last = 0, failedAlready = false;
+			results.forEach(function(stats, i) {
 
-		// trailing '/' = create empty directory
-		if(parts[parts.length - 1]) {
-			fs.writeFileSync(givenPath, content[givenPath].join("\n"));
+				console.log(stats.mtime.getTime(), filenames[i]);
+
+				if(!stats || !stats.isFile()) {
+					if(!failedAlready)
+						cb(new Error("Does not exist as a file, but should: " + filenames[i]), false);
+					failedAlready = true;
+
+				} else if(last >= stats.mtime.getTime()) {
+					if(!failedAlready)
+						cb(new Error("mtime(" + filenames[i-1] + ") >= mtime(" + filenames[i] + ")"), false);
+					failedAlready = true;
+				}
+
+				last = stats.mtime.getTime();
+			});
 		}
 	});
 }
-*/
+
 
 var mod = {};
 
@@ -101,18 +115,19 @@ mod.content = {
 		"dest: dir/src\n" +
 		"\tcp dir/src dest\n",
 	
-/*
 	'dir' : {
 		src:
 			"hello world\n"
 	}
-*/
 };
 
 
 
 mod.steps = [
-	20
+	"make",
+	[ "dir/src", "dest" ],
+	"touch dir/src",
+	[ "dir/src", "dest" ],
 ];
 
 mod.extrasteps = [
