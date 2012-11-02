@@ -3,7 +3,10 @@ var fs = require('fs'),
 	child_process = require('child_process'),
 	assert = require('assert'),
 	async = require('async'),
+	log = require('npmlog'),
 	mkfiletree = require('mkfiletree');
+
+var currentLogContext = "";
 
 //
 // A test is run by creating a temporary directory, filling it with
@@ -29,6 +32,8 @@ var fs = require('fs'),
 //
 
 function runTest(testModule, runTestCb) {
+	currentLogContext = "[" + testModule.name + "]";
+
 	// non-function steps get transformed into implementation functions
 	var plainSteps = testModule.steps.map(getFunctionForStep);
 
@@ -42,10 +47,12 @@ function runTest(testModule, runTestCb) {
 	});
 
 	// create temporary directory with files in it
+	log.info(currentLogContext, "Creating test tree");
 	mkfiletree.makeTemp('watchmaketest', testModule.content, function(err,dir) {
 		if(err) runTestCb(err,null);
 		else {
 			// change into the created directory
+			log.info(currentLogContext, "Running test in", dir);
 			var oldcwd = process.cwd();
 			process.chdir(dir);
 
@@ -57,6 +64,7 @@ function runTest(testModule, runTestCb) {
 				// if test failed, assert out(crash!), but callback successfully re: the actual
 				// test code
 				assert.ifError(err);
+				currentLogContext = "";
 				runTestCb(null, true);
 			});
 		}
@@ -65,20 +73,28 @@ function runTest(testModule, runTestCb) {
 
 
 function getFunctionForStep(s) {
-	if(typeof s == 'number')
-		return function(cb) { setTimeout(function() { cb(null, true); }, 1000*s); };
+	if(typeof s == 'number') return function(cb) {
+		log.info(currentLogContext, "Waiting for", s, "s..");
+		setTimeout(function() { cb(null, true); }, 1000*s);
+	};
 
-	else if(typeof s == 'string')
-		return function(cb) { child_process.exec(s, function(error, stdout, stderr) { cb(null, true); }); };
+	if(typeof s == 'string') return function(cb) {
+		log.info(currentLogContext, "Executing:", s);
+		child_process.exec(s, function(error, stdout, stderr) { cb(null, true); });
+	};
 
-	else if(Array.isArray(s))
-		return function(cb) { verifyModifiedOrder(s, cb); };
+	if(Array.isArray(s)) return function(cb) {
+		log.info(currentLogContext, "Verifying mtime order:", s);
+		verifyModifiedOrder(s, cb);
+	};
 
-	else if(typeof s == 'function')
-		return s;
+	if(typeof s == 'function') return function(cb) {
+		log.info(currentLogContext, "Executing arbitrary function");
+		s(cb);
+	};
 
-	else
-		throw new Error("invalid step in exports.steps");
+	// should have returned something by now
+	throw new Error("invalid step in exports.steps");
 }
 
 function verifyModifiedOrder(filenames, cb) {
@@ -87,8 +103,6 @@ function verifyModifiedOrder(filenames, cb) {
 		else {
 			var last = 0, failedAlready = false;
 			results.forEach(function(stats, i) {
-
-				console.log(stats.mtime.getTime(), filenames[i]);
 
 				if(!stats || !stats.isFile()) {
 					if(!failedAlready)
@@ -103,6 +117,8 @@ function verifyModifiedOrder(filenames, cb) {
 
 				last = stats.mtime.getTime();
 			});
+
+			if(!failedAlready) cb(null, true);
 		}
 	});
 }
@@ -127,8 +143,10 @@ mod.steps = [
 	"make",
 	[ "dir/src", "dest" ],
 	"touch dir/src",
-	[ "dir/src", "dest" ],
+	[ "Makefile", "dest", "dir/src" ],
 ];
+
+mod.name = "inlinetest";
 
 mod.extrasteps = [
 	"make",
