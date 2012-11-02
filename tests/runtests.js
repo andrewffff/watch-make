@@ -1,13 +1,7 @@
 
-var fs = require('fs'),
-	child_process = require('child_process'),
-	assert = require('assert'),
-	async = require('async'),
-	log = require('npmlog'),
-	mkfiletree = require('mkfiletree');
-
-var currentLogContext = "";
-
+//
+// Runs tests. Each test is its own javascript module. You can supply test
+// filenames on the command line; if you don't, test_*.js will be run.
 //
 // A test is run by creating a temporary directory, filling it with
 // the appropriate files (contained in exports.content), starting watch-make
@@ -31,11 +25,27 @@ var currentLogContext = "";
 //  - An arbitrary function which will be run with a callback function (per async.series)
 //
 
+var fs = require('fs'),
+	path = require('path'),
+	child_process = require('child_process'),
+	assert = require('assert'),
+	async = require('async'),
+	glob = require('glob'),
+	log = require('npmlog'),
+	mkfiletree = require('mkfiletree');
+
+var currentLogContext = "";
+
 function runTest(testModule, runTestCb) {
 	currentLogContext = "[" + testModule.name + "]";
 
 	// non-function steps get transformed into implementation functions
-	var plainSteps = testModule.steps.map(getFunctionForStep);
+	try {
+		var plainSteps = testModule.steps.map(getFunctionForStep);
+	} catch(e) {
+		runTestCb(e, null);
+		return;
+	}
 
 	// because os x only has 1s resolution on modification time, we need
 	// to add lots of pauses in-between steps so our comparisons work :(
@@ -53,19 +63,14 @@ function runTest(testModule, runTestCb) {
 		else {
 			// change into the created directory
 			log.info(currentLogContext, "Running test in", dir);
-			var oldcwd = process.cwd();
 			process.chdir(dir);
 
 			// run all the tests, and change out of the created directory afterwards
 			// so that it can be cleaned up if necessary
 			async.series(steps, function(err, result) {
-				process.chdir(oldcwd);
-
-				// if test failed, assert out(crash!), but callback successfully re: the actual
-				// test code
-				assert.ifError(err);
-				currentLogContext = "";
-				runTestCb(null, true);
+				if(!err)
+					currentLogContext = "";
+				runTestCb(err, true);
 			});
 		}
 	});
@@ -90,7 +95,11 @@ function getFunctionForStep(s) {
 
 	if(typeof s == 'function') return function(cb) {
 		log.info(currentLogContext, "Executing arbitrary function");
-		s(cb);
+		try {
+			s(cb);
+		} catch(e) {
+			cb(e, null);
+		}
 	};
 
 	// should have returned something by now
@@ -124,58 +133,37 @@ function verifyModifiedOrder(filenames, cb) {
 }
 
 
-var mod = {};
-
-mod.content = {
-	'Makefile': 
-		"dest: dir/src\n" +
-		"\tcp dir/src dest\n",
-	
-	'dir' : {
-		src:
-			"hello world\n"
-	}
-};
-
-
-
-mod.steps = [
-	"make",
-	[ "dir/src", "dest" ],
-	"touch dir/src",
-	[ "Makefile", "dest", "dir/src" ],
-];
-
-mod.name = "inlinetest";
-
-mod.extrasteps = [
-	"make",
-
-	[ "dir/src", "dest" ],
-
-	4,
-	
-	"touch dir/src",
-
-	4,
-
-	[ "Makefile", "dir/src", "dest" ]
-];
-
-var dir = process.cwd();
-runTest(mod, function(err,result) {
-	console.log("ERR:", err);
-	console.log("RES:", result);
-	console.log("Cleaning up...");
-	process.chdir('/');
-	process.chdir(dir);
-
-	mkfiletree.cleanUp(console.log);
+// locate test modules (as specified, or all appropriately named files
+// in same dir as runtests.js)
+var testFiles = process.argv.slice(2).map(function(filename) {
+	return (filename[0] == '/')
+		? filename
+		: "./" + filename;
 });
 
+if(!testFiles.length) {
+	process.chdir(path.dirname(process.argv[1]));
+	testFiles = glob.sync('./test_*.js');
+}
 
 
+// load all tests
+var testModules = testFiles.map(require);
+testModules.forEach(function(m, i) { m.name = testFiles[i]; });
+
+var testTasks = testModules.map(function(m) { return function(cb) { runTest(m, cb); }; });
 
 
+// run all the tests, clean up when finished or erroring out
+var startDir = process.cwd();
+async.series(testTasks, function(err,result) {
+	if(err) log.error(currentLogContext, err);
+	else log.info("", "All tests finished OK");
+
+	// clean up temp directories (need to chdir out of them)
+	process.chdir('/');
+	try { process.chdir(startDir); } catch(e) {;}
+	mkfiletree.cleanUp(assert.ifError);
+});
 
 
