@@ -22,17 +22,28 @@
 //    in the order given in the array. For instance, ["a.txt", "x/b.txt"] will succeed iff
 //    a.txt and x/b.txt both exist, and a.txt's last modified time is earlier than x/b.txt's.
 //
+//    NOTE: Last modified times may only have 1s resolution! (eg on osx's HFS+ filesystem,
+//    hardly an edge case :() So you should wait 2 seconds between actions on different files
+//    if you expect them to compare properly.
+//
 //  - An arbitrary function which will be run with a callback function (per async.series)
+//
+// Commonly, we perform an action, wait long enough for watch-make to act on it, then
+// observe the results. This is inherently dodgy but the alternative is some sort of
+// more specific observation of the process under test and/or the files.. too hard.
 //
 
 var fs = require('fs'),
 	path = require('path'),
 	child_process = require('child_process'),
 	assert = require('assert'),
+	util = require('util'),
 	async = require('async'),
 	glob = require('glob'),
 	log = require('npmlog'),
 	mkfiletree = require('mkfiletree');
+
+var watchMakeJsFile = path.resolve(path.dirname(process.argv[1]), '../watch-make');
 
 var currentLogContext = "";
 
@@ -47,30 +58,51 @@ function runTest(testModule, runTestCb) {
 		return;
 	}
 
-	// because os x only has 1s resolution on modification time, we need
-	// to add lots of pauses in-between steps so our comparisons work :(
-	var silentWait = function(cb) { setTimeout(function() { cb(null, true); }, 2000); };
-	var steps = [];
-	plainSteps.forEach(function(s) {
-		steps.push(silentWait);
-		steps.push(s);
-	});
+	// we pause for a bit at the start so watch-make can start
+	var silentWait = function(cb) { setTimeout(function() { cb(null, true); }, 3000); };
+	var steps = [silentWait].concat(plainSteps);
 
 	// create temporary directory with files in it
 	log.info(currentLogContext, "Creating test tree");
 	mkfiletree.makeTemp('watchmaketest', testModule.content, function(err,dir) {
 		if(err) runTestCb(err,null);
 		else {
-			// change into the created directory
+			// change into the created directory and run watch-make
 			log.info(currentLogContext, "Running test in", dir);
 			process.chdir(dir);
 
-			// run all the tests, and change out of the created directory afterwards
+			var procUnderTest = child_process.spawn(
+				process.execPath,
+				[watchMakeJsFile].concat(testModules.parameters || []),
+				{ stdio: 'inherit' });
+			var procShouldQuit = false;
+
+			log.info(currentLogContext, "watch-make child process started, pid", procUnderTest.pid);
+
+			procUnderTest.on('exit', function(code,signal) {
+				log.info(currentLogContext, "child process finished, exit code:", code, ", signal:", signal);
+
+				// we expect watch-make to exit only when we kill it
+				if(!procShouldQuit) {
+					runTestCb('watch-make process finished without being correctly killed, exit code = ' + util.inspect(code), true);
+					runTestCb = function(){;}; // async loop below will still be going haywire.. whatever
+				} else {
+					currentLogContext = "";
+					runTestCb(null, true);
+				}
+			});
+
+			// run all the tests, then kill the child process
 			// so that it can be cleaned up if necessary
 			async.series(steps, function(err, result) {
-				if(!err)
-					currentLogContext = "";
-				runTestCb(err, true);
+				if(err) {
+					// on success, then happens above after the child process exits
+					runTestCb(err, true);
+					runTestCb = function(){;};
+				}
+				log.info(currentLogContext, "sending SIGTERM to child process");
+				procShouldQuit = true;
+				procUnderTest.kill();
 			});
 		}
 	});

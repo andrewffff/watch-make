@@ -6,6 +6,7 @@ if(require.main === module) console.log("You can't start this directly - use run
 
 exports.steps = [
 	"touch a",
+	2,
 	"touch b",
 	[ "b", "a" ]
 ];

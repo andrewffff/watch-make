@@ -3,7 +3,7 @@
 exports.content = {
 	'Makefile': 
 		"dest: dir/src\n" +
-		"\tcp dir/src dest\n",
+		"\tsleep 2 && cp dir/src dest\n",
 	
 	'dir' : {
 		src:
@@ -14,10 +14,11 @@ exports.content = {
 
 
 exports.steps = [
-	"make",
 	[ "dir/src", "dest" ],
+	5,
 	"touch dir/src",
-	[ "Makefile", "dest", "dir/src" ],
+	5,
+	[ "Makefile", "dir/src", "dest" ],
 ];
 
 
