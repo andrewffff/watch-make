@@ -73,7 +73,7 @@ function runTest(testModule, runTestCb) {
 
 			var procUnderTest = child_process.spawn(
 				process.execPath,
-				[watchMakeJsFile].concat(testModules.parameters || []),
+				[watchMakeJsFile].concat(testModule.parameters || []),
 				{ stdio: 'inherit' });
 			var procShouldQuit = false;
 
