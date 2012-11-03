@@ -4,9 +4,10 @@
 // filenames on the command line; if you don't, test_*.js will be run.
 //
 // A test is run by creating a temporary directory, filling it with
-// the appropriate files (contained in exports.content), starting watch-make
-// (with the command line parameters in exports.parameters if present), then
-// following each step in exports.steps.
+// the appropriate files (contained in exports.content), starting watch-make,
+// then following each step in exports.steps. The optional exports.parameters
+// and exports.environment let you supply extra command line parameters and
+// environmental variables to invoke watch-make with.
 //
 // exports.content is in the format required by the mkfiletree module.
 //
@@ -39,6 +40,7 @@ var fs = require('fs'),
 	assert = require('assert'),
 	util = require('util'),
 	async = require('async'),
+	underscore = require('underscore'),
 	glob = require('glob'),
 	log = require('npmlog'),
 	mkfiletree = require('mkfiletree');
@@ -74,7 +76,10 @@ function runTest(testModule, runTestCb) {
 			var procUnderTest = child_process.spawn(
 				process.execPath,
 				[watchMakeJsFile].concat(testModule.parameters || []),
-				{ stdio: 'inherit' });
+				{
+					stdio: 'inherit',
+					env: underscore.extend({}, process.env, testModule.environment || {})
+				});
 			var procShouldQuit = false;
 
 			log.info(currentLogContext, "watch-make child process started, pid", procUnderTest.pid);
