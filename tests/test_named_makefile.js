@@ -17,6 +17,7 @@ exports.parameters = ["-fMakefile.other"];
 // Makefile.other should be used, and plain old Makefile should be ignored
 exports.steps = [
 	[ "src.txt", "c.txt"],
+	2,
 	"touch src.txt",
 	5,
 	[ "Makefile", "src.txt", "c.txt"]
