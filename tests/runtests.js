@@ -49,6 +49,30 @@ var watchMakeJsFile = path.resolve(path.dirname(process.argv[1]), '../watch-make
 
 var currentLogContext = "";
 
+//
+// Some pretty ugly stuff to make Control-C and friends work
+//
+
+var abortMsg = null;
+
+process.once('SIGINT', function() {
+	abortMsg = "Received SIGINT / Ctrl-C";
+	log.info(currentLogContext, abortMsg + " .. exiting gracefully, repeat to abort without cleanup.");
+});
+
+process.once('SIGTERM', function() {
+	abortMsg = "Received SIGTERM";
+	log.info(currentLogContext, abortMsg + " .. exiting gracefully, repeat to abort without cleanup.");
+});
+
+function wrapAsyncItemWithAbortCheck(fun) {
+	return function(cb) {
+		if(abortMsg) cb(new Error(abortMsg), false);
+		else fun(cb);
+	};
+}
+
+
 function runTest(testModule, runTestCb) {
 	currentLogContext = "[" + testModule.name + "]";
 
@@ -99,7 +123,7 @@ function runTest(testModule, runTestCb) {
 
 			// run all the tests, then kill the child process
 			// so that it can be cleaned up if necessary
-			async.series(steps, function(err, result) {
+			async.series(steps.map(wrapAsyncItemWithAbortCheck), function(err, result) {
 				if(err) {
 					// on success, then happens above after the child process exits
 					runTestCb(err, true);
@@ -193,12 +217,12 @@ var testTasks = testModules.map(function(m) { return function(cb) { runTest(m, c
 
 // run all the tests, clean up when finished or erroring out
 var startDir = process.cwd();
-async.series(testTasks, function(err,result) {
+async.series(testTasks.map(wrapAsyncItemWithAbortCheck), function(err,result) {
 	if(err) log.error(currentLogContext, err);
 	else log.info("", "All tests finished OK");
 
 	// clean up temp directories (need to chdir out of them)
-	process.chdir('/');
+	process.chdir('/'); // be able to clean up even in most paranoid worst case scenario
 	try { process.chdir(startDir); } catch(e) {;}
 	mkfiletree.cleanUp(assert.ifError);
 });
