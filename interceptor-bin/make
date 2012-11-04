@@ -42,7 +42,13 @@ conn.on('connect', function() {
 var previousData = '';
 conn.on('data', function(d) {
 	previousData += d;
-	var obj = JSON.parse(previousData);
+
+	var obj;
+	try {
+		obj = JSON.parse(previousData);
+	}
+	catch(e) {;}
+	
 	if(obj) {
 		// got it all
 		previousData = '';
